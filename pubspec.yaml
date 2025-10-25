@@ -1,0 +1,42 @@
+name: sangt6_nhom6_chamcong_nv
+description: "Ứng dụng Flutter demo chấm công NFC kết nối backend."
+publish_to: "none"
+
+# Phiên bản ứng dụng
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.9.0 <4.0.0"   # Dart SDK
+  # Nếu muốn, có thể thêm: flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI iOS-style (tùy chọn)
+  cupertino_icons: ^1.0.8
+
+  # --- Gói chính cho NFC + HTTP ---
+  nfc_manager: ^3.3.0
+  http: ^1.5.0
+  permission_handler: ^11.3.1
+  intl: ^0.19.0
+
+  # (tùy chọn cho các bước sau)
+  # camera: ^0.10.6
+  # local_auth: ^2.3.0
+  # path_provider: ^2.1.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  # assets:
+  #   - assets/
+  # fonts:
+  #   - family: YourFont
+  #     fonts:
+  #       - asset: assets/fonts/YourFont-Regular.ttf
