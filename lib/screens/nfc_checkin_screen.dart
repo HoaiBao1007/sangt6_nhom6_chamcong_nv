@@ -1,9 +1,15 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:nfc_manager/nfc_manager.dart';
-import 'package:nfc_manager/platform_tags.dart'; // dùng với nfc_manager 3.x
-import '../services/api_client.dart';
+import 'package:nfc_manager/platform_tags.dart'; // bản 3.x cần import này
+import 'package:provider/provider.dart';
 
+import '../services/api_client.dart';
+import '../state/auth_state.dart';
+import 'login_screen.dart';
+import 'register_screen.dart';
+import 'admin_add_employee_screen.dart';
+import 'admin_dashboard.dart';
 class NfcCheckinScreen extends StatefulWidget {
   const NfcCheckinScreen({super.key});
 
@@ -17,7 +23,7 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
   String? _lastUid;
   String? _status;
 
-  // Đảo byte để trùng thứ tự in trên thẻ (MSB -> LSB)
+  // Nếu thẻ in UID theo MSB->LSB, bật true để đảo byte cho khớp
   static const bool REVERSE_ANDROID_BYTES = true;
 
   @override
@@ -32,7 +38,7 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
   Uint8List _maybeReverse(Uint8List src) =>
       REVERSE_ANDROID_BYTES ? Uint8List.fromList(src.reversed.toList()) : src;
 
-  /// Lấy UID qua các công nghệ tag khác nhau
+  /// Lấy UID qua các công nghệ (3.x: dùng platform_tags.*)
   Uint8List? _getUidFromTag(NfcTag tag) {
     final nfcA = NfcA.from(tag);
     if (nfcA?.identifier != null) return nfcA!.identifier;
@@ -46,43 +52,42 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
     final isoDep = IsoDep.from(tag);
     if (isoDep?.identifier != null) return isoDep!.identifier;
 
-    final nfcV = NfcV.from(tag); // ISO15693
-    if (nfcV?.identifier != null) return nfcV!.identifier;
+    final nfcb = NfcB.from(tag);
+    if (nfcb?.identifier != null) return nfcb!.identifier;
 
-    final nfcF = NfcF.from(tag); // FeliCa
-    if (nfcF?.identifier != null) return nfcF!.identifier;
+    final nfcf = NfcF.from(tag);
+    if (nfcf?.identifier != null) return nfcf!.identifier;
+
+    final nfcv = NfcV.from(tag); // ISO15693
+    if (nfcv?.identifier != null) return nfcv!.identifier;
 
     final ndef = Ndef.from(tag);
     if (ndef?.additionalData['identifier'] is Uint8List) {
       return ndef!.additionalData['identifier'] as Uint8List;
     }
 
+    // Fallback: một số máy map UID ở root
     final data = tag.data;
     if (data is Map && data['id'] is Uint8List) {
       return data['id'] as Uint8List;
     }
-
     return null;
   }
 
   Future<void> _startScan() async {
     final available = await NfcManager.instance.isAvailable();
     if (!available) {
-      setState(() => _status = '⚠️ NFC không khả dụng hoặc đang tắt. Vào Cài đặt > NFC để bật.');
+      setState(() => _status = '⚠️ NFC không khả dụng hoặc đang tắt.');
       return;
     }
 
     setState(() {
       _isScanning = true;
-      _status = '🔄 Đang chờ thẻ... (hãy đưa thẻ sát vùng ăng-ten máy)';
+      _status = '🔄 Đang chờ thẻ... (đặt thẻ sát vùng ăng-ten)';
     });
 
     await NfcManager.instance.startSession(
-      pollingOptions: {
-        NfcPollingOption.iso14443,
-        NfcPollingOption.iso15693,
-        NfcPollingOption.iso18092,
-      },
+      // 3.3.0: không cần pollingOptions
       onDiscovered: (NfcTag tag) async {
         try {
           Uint8List? uid = _getUidFromTag(tag);
@@ -93,43 +98,139 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
 
           setState(() {
             _lastUid = hexUid;
-            _status = 'Đã đọc UID: $hexUid – đang gửi API...';
+            _status = 'UID: $hexUid – đang gửi API...';
           });
 
           final res = await _api.tapByNfc(hexUid);
-
           final action = (res['action'] ?? '').toString().toLowerCase();
-          String msg;
-          if (action == 'checkin') {
-            msg = res['message']?.toString() ?? '✅ Check-in thành công!';
-          } else if (action == 'checkout') {
-            msg = res['message']?.toString() ?? '✅ Check-out thành công!';
-          } else {
-            msg = '✅ Thành công.';
-          }
+          final msg = action == 'checkin'
+              ? (res['message']?.toString() ?? '✅ Check-in thành công!')
+              : action == 'checkout'
+              ? (res['message']?.toString() ?? '✅ Check-out thành công!')
+              : (res['message']?.toString() ?? '✅ Thành công.');
 
+          if (!mounted) return;
           setState(() => _status = msg);
-
-          // Thêm Snackbar cho trực quan
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(msg)),
-            );
-          }
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
         } catch (e) {
+          if (!mounted) return;
           setState(() => _status = '❌ Lỗi: $e');
         } finally {
           await NfcManager.instance.stopSession();
-          setState(() => _isScanning = false);
+          if (mounted) setState(() => _isScanning = false);
         }
       },
     );
   }
 
+  // ===== Nút Người dùng trên AppBar =====
+  void _openUserMenu(BuildContext context) {
+    final auth = context.read<AuthState>();
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (_) {
+        final isAuthed = auth.isAuthed;
+        final isAdmin = auth.isAdmin;
+
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(isAuthed ? 'Tài khoản' : 'Người dùng',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 12),
+
+              if (!isAuthed) ...[
+                FilledButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const LoginScreen()));
+                  },
+                  child: const Text('Đăng nhập'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const RegisterScreen()));
+                  },
+                  child: const Text('Đăng ký'),
+                ),
+              ] else ...[
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.verified_user),
+                  title: Text('Role: ${auth.role ?? 'UNKNOWN'}'),
+                ),
+
+                if (isAdmin) ...[
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    icon: const Icon(Icons.analytics),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const AdminDashboard()),
+                      );
+                    },
+                    label: const Text('Bảng chấm công (ADMIN)'),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    icon: const Icon(Icons.group_add),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const AdminAddEmployeeScreen()),
+                      );
+                    },
+                    label: const Text('Thêm nhân viên'),
+                  ),
+                ],
+
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.logout),
+                  onPressed: () async {
+                    await context.read<AuthState>().doLogout();
+                    if (context.mounted) Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Đã đăng xuất')),
+                    );
+                  },
+                  label: const Text('Đăng xuất'),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthState>();
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Chấm công NFC')),
+      appBar: AppBar(
+        title: const Text('Chấm công NFC'),
+        actions: [
+          IconButton(
+            tooltip: auth.isAuthed ? 'Tài khoản' : 'Người dùng',
+            icon: const Icon(Icons.person),
+            onPressed: () => _openUserMenu(context),
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -145,7 +246,7 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
             if (_status != null) Text(_status!),
             const Spacer(),
             Text(
-              'UID HEX ${REVERSE_ANDROID_BYTES ? "(đã đảo byte MSB←LSB)" : "(giữ nguyên Android)"} – chữ HOA, không có dấu ":"',
+              'UID HEX ${REVERSE_ANDROID_BYTES ? "(đã đảo byte MSB←LSB)" : "(giữ nguyên Android)"} – chữ HOA, không dấu ":"',
               style: const TextStyle(fontStyle: FontStyle.italic),
             ),
           ],

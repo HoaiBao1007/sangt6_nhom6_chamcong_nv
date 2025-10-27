@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../state/auth_state.dart';
 import 'register_screen.dart';
 import 'nfc_checkin_screen.dart';
+import 'admin_dashboard.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -18,18 +19,27 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+
     final auth = context.read<AuthState>();
     final err = await auth.doLogin(_email.text.trim(), _password.text.trim());
+
     if (err != null) {
       setState(() => _error = err);
     } else {
-      // Đăng nhập xong -> sang quét NFC
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const NfcCheckinScreen()),
-            (_) => false,
-      );
+      // Nếu là ADMIN → sang Dashboard luôn.
+      if (auth.isAdmin) {
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const AdminDashboard()),
+        );
+      } else {
+        // USER → quay về NFC (đóng màn hình login)
+        if (mounted) Navigator.pop(context);
+      }
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
