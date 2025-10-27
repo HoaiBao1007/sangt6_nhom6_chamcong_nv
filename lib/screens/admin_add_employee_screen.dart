@@ -1,133 +1,181 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:nfc_manager/nfc_manager.dart';
+import 'dart:convert';
 import 'package:http/http.dart' as http;
-
+import 'package:provider/provider.dart'; // ✅ để truy cập AuthState
 import '../state/auth_state.dart';
-// NOTE: bạn đang để config.dart trong thư mục widgets (theo screenshot)
-// nếu của bạn ở chỗ khác, chỉnh đường dẫn cho đúng:
-import 'package:sangt6_nhom6_chamcong_nv/widgets/config.dart';
+import '../widgets/config.dart';
 
-
-class AdminAddEmployeeScreen extends StatefulWidget {
-  const AdminAddEmployeeScreen({super.key});
+class AddEmployeeScreen extends StatefulWidget {
+  const AddEmployeeScreen({Key? key}) : super(key: key);
 
   @override
-  State<AdminAddEmployeeScreen> createState() => _AdminAddEmployeeScreenState();
+  State<AddEmployeeScreen> createState() => _AddEmployeeScreenState();
 }
 
-class _AdminAddEmployeeScreenState extends State<AdminAddEmployeeScreen> {
-  final _fullName = TextEditingController();
-  final _email = TextEditingController();
-  final _nfcTagId = TextEditingController(); // HEX UPPER, không có dấu ':'
-  final _hourlyRate = TextEditingController(text: '50000');
-  bool _isBanned = false;
+class _AddEmployeeScreenState extends State<AddEmployeeScreen> {
+  final _nameController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _hourlyRateController = TextEditingController();
 
-  bool _loading = false;
-  String? _error;
+  bool isScanning = false;
+  int? newEmployeeId;
 
-  Future<void> _submit() async {
-    if (_fullName.text.trim().isEmpty || _email.text.trim().isEmpty) {
-      setState(() => _error = 'Nhập Họ tên và Email.');
+  /// ✅ Thêm nhân viên mới
+  Future<void> addEmployee() async {
+    final token = context.read<AuthState>().token; // ✅ Lấy token thật
+    if (token == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("⚠️ Bạn chưa đăng nhập!")),
+      );
       return;
     }
 
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    if (_nameController.text.isEmpty ||
+        _emailController.text.isEmpty ||
+        _hourlyRateController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("❌ Vui lòng nhập đầy đủ thông tin")),
+      );
+      return;
+    }
+
+    final uri = Uri.parse("${AppConfig.baseUrl}/api/employee");
 
     try {
-      final token = context.read<AuthState>().token;
-      final uri = Uri.parse('${AppConfig.baseUrl}/api/Employees'); // ⚠️ ĐỔI nếu route khác
-      final body = jsonEncode({
-        'fullName': _fullName.text.trim(),
-        'email': _email.text.trim(),
-        'nfcTagId': _nfcTagId.text.trim().toUpperCase(),
-        'hourlyRate': double.tryParse(_hourlyRate.text) ?? 0,
-        'isBanned': _isBanned,
-      });
-
       final res = await http.post(
         uri,
         headers: {
           'Content-Type': 'application/json',
-          if (token != null) 'Authorization': 'Bearer $token',
+          'Authorization': 'Bearer $token',
         },
-        body: body,
+        body: jsonEncode({
+          "fullName": _nameController.text.trim(),
+          "email": _emailController.text.trim(),
+          "hourlyRate": double.parse(_hourlyRateController.text.trim()),
+        }),
       );
 
-      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        setState(() {
+          newEmployeeId = data["employee"]["employeeId"];
+        });
 
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Đã thêm nhân viên.')),
-        );
-        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("✅ Thêm nhân viên thành công, hãy quét thẻ NFC!"),
+          duration: Duration(seconds: 3),
+        ));
+
+        startNfcScan(); // ✅ Gọi quét NFC
       } else {
-        setState(() => _error = 'HTTP ${res.statusCode}: ${res.body}');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("❌ Lỗi thêm nhân viên: ${res.body}")),
+        );
       }
     } catch (e) {
-      setState(() => _error = 'Lỗi: $e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("⚠️ Lỗi kết nối server: $e")),
+      );
+    }
+  }
+
+  /// ✅ Bắt đầu quét thẻ NFC
+  void startNfcScan() async {
+    if (isScanning) return;
+    setState(() => isScanning = true);
+
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text("📡 Đang chờ quét thẻ NFC..."),
+      duration: Duration(seconds: 5),
+    ));
+
+    NfcManager.instance.startSession(onDiscovered: (NfcTag tag) async {
+      final nfcId = tag.data["nfca"]?["identifier"];
+      if (nfcId != null) {
+        final uidHex = nfcId
+            .map((b) => b.toRadixString(16).padLeft(2, '0'))
+            .join("")
+            .toUpperCase();
+
+        await assignNfcToEmployee(uidHex);
+        NfcManager.instance.stopSession();
+        setState(() => isScanning = false);
+      }
+    });
+  }
+
+  /// ✅ Gán UID NFC cho nhân viên vừa thêm
+  Future<void> assignNfcToEmployee(String uid) async {
+    final token = context.read<AuthState>().token; // ✅ Lấy token thật
+    if (token == null || newEmployeeId == null) return;
+
+    final uri = Uri.parse("${AppConfig.baseUrl}/api/employee/scan-nfc");
+
+    try {
+      final res = await http.put(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token'
+        },
+        body: jsonEncode({
+          "employeeId": newEmployeeId,
+          "nfcTagId": uid,
+        }),
+      );
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              "✅ Đã gán thẻ NFC: ${data['nfcTagId']} cho ${data['fullName']}"),
+        ));
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("❌ Lỗi gán NFC: ${res.body}")),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("⚠️ Lỗi kết nối: $e")),
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final isAdmin = context.watch<AuthState>().isAdmin;
-
     return Scaffold(
-      appBar: AppBar(title: const Text('Thêm nhân viên')),
+      appBar: AppBar(title: const Text("Thêm nhân viên")),
       body: Padding(
         padding: const EdgeInsets.all(16),
-        child: isAdmin
-            ? ListView(
+        child: Column(
           children: [
             TextField(
-              controller: _fullName,
-              decoration: const InputDecoration(labelText: 'Họ tên'),
+              controller: _nameController,
+              decoration: const InputDecoration(labelText: "Họ tên"),
             ),
-            const SizedBox(height: 8),
             TextField(
-              controller: _email,
-              decoration: const InputDecoration(labelText: 'Email'),
+              controller: _emailController,
+              decoration: const InputDecoration(labelText: "Email"),
             ),
-            const SizedBox(height: 8),
             TextField(
-              controller: _nfcTagId,
-              decoration: const InputDecoration(
-                labelText: 'NFC Tag ID (HEX, UPPER, không ":")',
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _hourlyRate,
+              controller: _hourlyRateController,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Lương theo giờ'),
+              decoration: const InputDecoration(labelText: "Lương/giờ"),
             ),
-            const SizedBox(height: 8),
-            SwitchListTile(
-              title: const Text('Cấm (IsBanned)'),
-              value: _isBanned,
-              onChanged: (v) => setState(() => _isBanned = v),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: addEmployee,
+              icon: const Icon(Icons.add),
+              label: const Text("Thêm nhân viên"),
             ),
-            const SizedBox(height: 12),
-            if (_error != null)
-              Text(_error!, style: const TextStyle(color: Colors.red)),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: _loading ? null : _submit,
-              child: Text(_loading ? 'Đang lưu...' : 'Lưu'),
-            ),
+            if (isScanning)
+              const Padding(
+                padding: EdgeInsets.only(top: 20),
+                child: LinearProgressIndicator(),
+              ),
           ],
-        )
-            : const Center(
-          child: Text(
-            'Chỉ ADMIN mới được thêm nhân viên.',
-            style: TextStyle(fontWeight: FontWeight.w600),
-          ),
         ),
       ),
     );

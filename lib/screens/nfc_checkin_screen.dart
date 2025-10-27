@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:nfc_manager/nfc_manager.dart';
-import 'package:nfc_manager/platform_tags.dart'; // bản 3.x cần import này
+import 'package:nfc_manager/platform_tags.dart';
 import 'package:provider/provider.dart';
 
 import '../services/api_client.dart';
@@ -10,6 +10,8 @@ import 'login_screen.dart';
 import 'register_screen.dart';
 import 'admin_add_employee_screen.dart';
 import 'admin_dashboard.dart';
+import 'user_dashboard.dart'; // ✅ thêm dòng này
+
 class NfcCheckinScreen extends StatefulWidget {
   const NfcCheckinScreen({super.key});
 
@@ -23,7 +25,6 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
   String? _lastUid;
   String? _status;
 
-  // Nếu thẻ in UID theo MSB->LSB, bật true để đảo byte cho khớp
   static const bool REVERSE_ANDROID_BYTES = true;
 
   @override
@@ -38,7 +39,6 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
   Uint8List _maybeReverse(Uint8List src) =>
       REVERSE_ANDROID_BYTES ? Uint8List.fromList(src.reversed.toList()) : src;
 
-  /// Lấy UID qua các công nghệ (3.x: dùng platform_tags.*)
   Uint8List? _getUidFromTag(NfcTag tag) {
     final nfcA = NfcA.from(tag);
     if (nfcA?.identifier != null) return nfcA!.identifier;
@@ -58,7 +58,7 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
     final nfcf = NfcF.from(tag);
     if (nfcf?.identifier != null) return nfcf!.identifier;
 
-    final nfcv = NfcV.from(tag); // ISO15693
+    final nfcv = NfcV.from(tag);
     if (nfcv?.identifier != null) return nfcv!.identifier;
 
     final ndef = Ndef.from(tag);
@@ -66,7 +66,6 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
       return ndef!.additionalData['identifier'] as Uint8List;
     }
 
-    // Fallback: một số máy map UID ở root
     final data = tag.data;
     if (data is Map && data['id'] is Uint8List) {
       return data['id'] as Uint8List;
@@ -86,52 +85,51 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
       _status = '🔄 Đang chờ thẻ... (đặt thẻ sát vùng ăng-ten)';
     });
 
-    await NfcManager.instance.startSession(
-      // 3.3.0: không cần pollingOptions
-      onDiscovered: (NfcTag tag) async {
-        try {
-          Uint8List? uid = _getUidFromTag(tag);
-          if (uid == null) throw Exception('Không đọc được UID từ thẻ.');
+    await NfcManager.instance.startSession(onDiscovered: (NfcTag tag) async {
+      try {
+        Uint8List? uid = _getUidFromTag(tag);
+        if (uid == null) throw Exception('Không đọc được UID từ thẻ.');
 
-          uid = _maybeReverse(uid);
-          final hexUid = _bytesToHexNoColon(uid);
+        uid = _maybeReverse(uid);
+        final hexUid = _bytesToHexNoColon(uid);
 
-          setState(() {
-            _lastUid = hexUid;
-            _status = 'UID: $hexUid – đang gửi API...';
-          });
+        setState(() {
+          _lastUid = hexUid;
+          _status = 'UID: $hexUid – đang gửi API...';
+        });
 
-          final res = await _api.tapByNfc(hexUid);
-          final action = (res['action'] ?? '').toString().toLowerCase();
-          final msg = action == 'checkin'
-              ? (res['message']?.toString() ?? '✅ Check-in thành công!')
-              : action == 'checkout'
-              ? (res['message']?.toString() ?? '✅ Check-out thành công!')
-              : (res['message']?.toString() ?? '✅ Thành công.');
+        final res = await _api.tapByNfc(hexUid);
+        final action = (res['action'] ?? '').toString().toLowerCase();
+        final msg = action == 'checkin'
+            ? (res['message']?.toString() ?? '✅ Check-in thành công!')
+            : action == 'checkout'
+            ? (res['message']?.toString() ?? '✅ Check-out thành công!')
+            : (res['message']?.toString() ?? '✅ Thành công.');
 
-          if (!mounted) return;
-          setState(() => _status = msg);
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-        } catch (e) {
-          if (!mounted) return;
-          setState(() => _status = '❌ Lỗi: $e');
-        } finally {
-          await NfcManager.instance.stopSession();
-          if (mounted) setState(() => _isScanning = false);
-        }
-      },
-    );
+        if (!mounted) return;
+        setState(() => _status = msg);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _status = '❌ Lỗi: $e');
+      } finally {
+        await NfcManager.instance.stopSession();
+        if (mounted) setState(() => _isScanning = false);
+      }
+    });
   }
 
-  // ===== Nút Người dùng trên AppBar =====
+  // ===== Menu tài khoản =====
   void _openUserMenu(BuildContext context) {
     final auth = context.read<AuthState>();
+
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
       builder: (_) {
         final isAuthed = auth.isAuthed;
         final isAdmin = auth.isAdmin;
+        final isEmployee = auth.isEmployee; // ✅ Thêm dòng này
 
         return Padding(
           padding: const EdgeInsets.all(16),
@@ -168,6 +166,7 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
                   title: Text('Role: ${auth.role ?? 'UNKNOWN'}'),
                 ),
 
+                // 👨‍💼 ADMIN MENU
                 if (isAdmin) ...[
                   const SizedBox(height: 8),
                   FilledButton.icon(
@@ -188,10 +187,26 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
                       Navigator.pop(context);
                       Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (_) => const AdminAddEmployeeScreen()),
+                        MaterialPageRoute(builder: (_) => const AddEmployeeScreen()),
                       );
                     },
                     label: const Text('Thêm nhân viên'),
+                  ),
+                ],
+
+                // 👷‍♂️ EMPLOYEE MENU
+                if (isEmployee) ...[
+                  const SizedBox(height: 8),
+                  FilledButton.icon(
+                    icon: const Icon(Icons.person),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const UserDashboard()),
+                      );
+                    },
+                    label: const Text('Bảng điều khiển nhân viên'),
                   ),
                 ],
 
@@ -214,7 +229,6 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
       },
     );
   }
-
 
   @override
   Widget build(BuildContext context) {
