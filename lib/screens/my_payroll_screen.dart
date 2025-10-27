@@ -5,21 +5,20 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../state/auth_state.dart';
 import '../widgets/config.dart';
-import 'change_password_screen.dart'; // ✅ Trang đổi mật khẩu
 
-// Thêm enum có cả ngày
-enum Period { day, week, month, quarter, year }
+enum Period { month, quarter, year }
 
-class AdminDashboard extends StatefulWidget {
-  const AdminDashboard({super.key});
+class MyPayrollScreen extends StatefulWidget {
+  const MyPayrollScreen({super.key});
+
   @override
-  State<AdminDashboard> createState() => _AdminDashboardState();
+  State<MyPayrollScreen> createState() => _MyPayrollScreenState();
 }
 
-class _AdminDashboardState extends State<AdminDashboard> {
+class _MyPayrollScreenState extends State<MyPayrollScreen> {
   bool _loading = false;
   String? _error;
-  List<dynamic> _payrolls = []; // ✅ Đổi tên biến cho đúng
+  List<dynamic> _payrolls = [];
 
   Period _period = Period.month;
   DateTime _anchor = DateTime.now();
@@ -30,7 +29,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
     _fetchPayrolls();
   }
 
-  // ✅ Gọi API PayrollController
   Future<void> _fetchPayrolls() async {
     setState(() {
       _loading = true;
@@ -38,11 +36,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
     });
     try {
       final token = context.read<AuthState>().token;
-      final uri = Uri.parse('${AppConfig.baseUrl}/api/payroll/all');
+      final uri = Uri.parse('${AppConfig.baseUrl}/api/payroll/my-history');
       final res = await http.get(uri, headers: {
         'Content-Type': 'application/json',
         if (token != null) 'Authorization': 'Bearer $token',
       });
+
       if (res.statusCode == 200) {
         _payrolls = jsonDecode(res.body) as List;
       } else {
@@ -55,74 +54,57 @@ class _AdminDashboardState extends State<AdminDashboard> {
     }
   }
 
-  // ✅ Bộ lọc theo kỳ (tháng, quý, năm)
-  List<Map<String, dynamic>> _filteredPayrolls() {
-    final df = DateFormat('yyyy-MM');
-    final currentLabel = _rangeLabel(_period, _anchor);
-    return _payrolls.where((p) {
-      final label = p['period']?.toString() ?? '';
-      return label.contains(df.format(_anchor)) || label.contains(currentLabel);
-    }).map((p) => {
-      'period': p['period'],
-      'employeeName': p['employeeName'] ?? '',
-      'totalHours': p['totalHours'] ?? 0,
-      'totalSalary': p['totalSalary'] ?? 0,
-    }).toList();
+  // ✅ Lọc dữ liệu theo kỳ
+  List<dynamic> _filtered() {
+    if (_payrolls.isEmpty) return [];
+    final year = _anchor.year;
+    switch (_period) {
+      case Period.month:
+        final month = _anchor.month.toString().padLeft(2, '0');
+        return _payrolls.where((p) => p['period'] == '$year-$month').toList();
+      case Period.quarter:
+        final q = ((DateTime.now().month - 1) ~/ 3) + 1;
+        final months = List.generate(3, (i) => ((q - 1) * 3 + i + 1).toString().padLeft(2, '0'));
+        return _payrolls.where((p) {
+          return p['period'].toString().startsWith('$year-') &&
+              months.any((m) => p['period'].toString().endsWith(m));
+        }).toList();
+      case Period.year:
+        return _payrolls.where((p) => p['period'].toString().startsWith('$year-')).toList();
+    }
   }
 
   String _rangeLabel(Period p, DateTime d) {
-    final df = DateFormat('MM/yyyy');
     switch (p) {
-      case Period.day:
-        return DateFormat('dd/MM/yyyy').format(d);
-      case Period.week:
-      // ✅ Tính tuần của năm thủ công
-        final firstDay = DateTime(d.year, 1, 1);
-        final diff = d.difference(firstDay).inDays;
-        final weekNumber = ((diff + firstDay.weekday) / 7).ceil();
-        return 'Tuần $weekNumber/${d.year}';
       case Period.month:
-        return df.format(d);
+        return 'Tháng ${d.month}/${d.year}';
       case Period.quarter:
         final q = ((d.month - 1) ~/ 3) + 1;
-        return 'Q$q/${d.year}';
+        return 'Quý $q/${d.year}';
       case Period.year:
-        return '${d.year}';
+        return 'Năm ${d.year}';
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final list = _filteredPayrolls();
-    final totalSalary =
-    list.fold<double>(0, (sum, s) => sum + (s['totalSalary'] as num).toDouble());
+    final list = _filtered();
+    final fmt = NumberFormat.currency(locale: "vi_VN", symbol: "₫");
+    final total = list.fold<double>(0, (sum, e) => sum + (e['totalSalary'] as num).toDouble());
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Bảng lương & chấm công (ADMIN)'),
+        title: const Text("Bảng lương của tôi"),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _fetchPayrolls,
-          ),
-          IconButton(
-            icon: const Icon(Icons.lock_reset),
-            tooltip: "Đổi mật khẩu",
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ChangePasswordScreen()),
-              );
-            },
-          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _fetchPayrolls),
         ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-          ? Center(child: Text('Lỗi: $_error'))
+          ? Center(child: Text("Lỗi: $_error"))
           : Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -136,10 +118,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   isSelected: [
                     _period == Period.month,
                     _period == Period.quarter,
-                    _period == Period.year
+                    _period == Period.year,
                   ],
-                  onPressed: (i) =>
-                      setState(() => _period = [Period.month, Period.quarter, Period.year][i]),
+                  onPressed: (i) => setState(() => _period = Period.values[i]),
                   children: const [
                     Padding(
                       padding: EdgeInsets.symmetric(horizontal: 12),
@@ -157,16 +138,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             Text(
-              'Bảng lương (${list.length}) kỳ: ${_rangeLabel(_period, _anchor)}',
-              style: const TextStyle(
-                  fontSize: 16, fontWeight: FontWeight.bold),
+              '📅 Kỳ: ${_rangeLabel(_period, _anchor)}',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Expanded(
               child: list.isEmpty
-                  ? const Center(child: Text('Không có dữ liệu lương.'))
+                  ? const Center(child: Text("Chưa có bảng lương cho kỳ này."))
                   : ListView.builder(
                 itemCount: list.length,
                 itemBuilder: (_, i) {
@@ -174,9 +154,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   return Card(
                     child: ListTile(
                       leading: const Icon(Icons.payments),
-                      title: Text(p['employeeName']),
+                      title: Text("Kỳ: ${p['period']}"),
                       subtitle: Text(
-                          'Kỳ: ${p['period']}\nGiờ: ${p['totalHours']}h\nLương: ${NumberFormat.currency(locale: "vi_VN", symbol: "₫").format(p['totalSalary'])}'),
+                          "Giờ công: ${p['totalHours']}h\nLương: ${fmt.format(p['totalSalary'])}"),
                     ),
                   );
                 },
@@ -184,11 +164,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
             ),
             const SizedBox(height: 10),
             Text(
-              '💰 Tổng chi phí kỳ này: ${NumberFormat.currency(locale: "vi_VN", symbol: "₫").format(totalSalary)}',
+              "Tổng lương kỳ này: ${fmt.format(total)}",
               style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.teal),
+                  fontSize: 16, fontWeight: FontWeight.bold, color: Colors.teal),
             ),
           ],
         ),

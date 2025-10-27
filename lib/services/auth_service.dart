@@ -66,6 +66,23 @@ class AuthService {
     }
   }
 
+  String? extractEmailFromToken(String token) {
+    try {
+      // Tách payload ra (phần giữa của JWT)
+      final parts = token.split('.');
+      if (parts.length != 3) return null;
+      final payload = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+      final data = jsonDecode(payload);
+
+      // Thông thường key là "email" hoặc "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"
+      return data['email'] ??
+          data['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress'];
+    } catch (e) {
+      print("extractEmailFromToken error: $e");
+      return null;
+    }
+  }
+
   Future<void> _saveToken(String token) async {
     final sp = await SharedPreferences.getInstance();
     await sp.setString(_kTokenKey, token);

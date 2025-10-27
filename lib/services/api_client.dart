@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 class ApiClient {
   // ⚠️ ĐỔI IP/PORT cho đúng máy chạy API của bạn
   // Ví dụ: http://192.168.110.144:7161
-  static const String base = 'http://192.168.1.113:7161';
+  static const String base = 'http://192.168.110.226:7161';
   final String _baseUrl = '$base/api';
 
   Future<Map<String, dynamic>> _postJson(
