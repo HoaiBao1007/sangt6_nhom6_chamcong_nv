@@ -137,10 +137,11 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(isAuthed ? 'Tài khoản' : 'Người dùng',
+              Text(isAuthed ? 'Tài khoản' : 'Tài Khoản',
                   style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 12),
-
+              ListTile(
+              ),
               if (!isAuthed) ...[
                 FilledButton(
                   onPressed: () {
@@ -161,9 +162,6 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
                 ),
               ] else ...[
                 ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.verified_user),
-                  title: Text('Role: ${auth.role ?? 'UNKNOWN'}'),
                 ),
 
                 // 👨‍💼 ADMIN MENU
@@ -206,7 +204,7 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
                         MaterialPageRoute(builder: (_) => const UserDashboard()),
                       );
                     },
-                    label: const Text('Bảng điều khiển nhân viên'),
+                    label: const Text('Tài khoản'),
                   ),
                 ],
 
@@ -259,10 +257,6 @@ class _NfcCheckinScreenState extends State<NfcCheckinScreen> {
             const SizedBox(height: 8),
             if (_status != null) Text(_status!),
             const Spacer(),
-            Text(
-              'UID HEX ${REVERSE_ANDROID_BYTES ? "(đã đảo byte MSB←LSB)" : "(giữ nguyên Android)"} – chữ HOA, không dấu ":"',
-              style: const TextStyle(fontStyle: FontStyle.italic),
-            ),
           ],
         ),
       ),
